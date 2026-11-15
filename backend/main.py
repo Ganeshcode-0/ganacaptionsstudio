@@ -1,11 +1,19 @@
+import asyncio
 import os
-from typing import Optional
+import re
+from pathlib import Path
+from typing import Any
 
 import httpx
+from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
-app = FastAPI(title="Gana Caption Studio API", version="0.1.0")
+REPO_ROOT = Path(__file__).resolve().parent.parent
+load_dotenv(REPO_ROOT / ".env")
+
+app = FastAPI(title="Gana Caption Studio API", version="0.2.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:8000").split(","),
@@ -15,11 +23,80 @@ app.add_middleware(
 )
 
 MAX_AUDIO_BYTES = 24 * 1024 * 1024
-ALLOWED_AUDIO = {"audio/webm", "audio/mp4", "audio/mpeg", "audio/wav", "audio/x-wav", "audio/ogg", "audio/aac", "audio/mp3"}
+ALLOWED_AUDIO = {
+    "audio/webm", "audio/mp4", "audio/mpeg", "audio/wav",
+    "audio/x-wav", "audio/ogg", "audio/aac", "audio/mp3",
+}
+
+def _seconds(value: Any) -> float | None:
+    if value is None:
+        return None
+    if hasattr(value, "total_seconds"):
+        return float(value.total_seconds())
+    if isinstance(value, (int, float)):
+        return float(value)
+    raw = str(value).strip()
+    match = re.fullmatch(r"([0-9]+(?:\\.[0-9]+)?)s", raw)
+    if match:
+        return float(match.group(1))
+    try:
+        return float(raw)
+    except ValueError:
+        return None
+
+def _gemini_words(response: Any) -> tuple[str, list[dict[str, Any]]]:
+    transcript_parts: list[str] = []
+    words: list[dict[str, Any]] = []
+    for part in (getattr(response, "parts", None) or []):
+        part_text = getattr(part, "text", None)
+        audio_tx = getattr(part, "audio_transcription", None)
+        tx_text = getattr(audio_tx, "text", None) if audio_tx else None
+        if part_text:
+            transcript_parts.append(str(part_text))
+        elif tx_text:
+            transcript_parts.append(str(tx_text))
+        if audio_tx:
+            for item in (getattr(audio_tx, "words", None) or []):
+                word = getattr(item, "word", None)
+                start = _seconds(getattr(item, "start_offset", None))
+                end = _seconds(getattr(item, "end_offset", None))
+                if word and start is not None and end is not None and end > start:
+                    words.append({"text": str(word), "start": start, "end": end, "granularity": "word"})
+    transcript = " ".join(x.strip() for x in transcript_parts if x.strip()).strip()
+    if not transcript:
+        transcript = str(getattr(response, "text", "") or "").strip()
+    return transcript, words
+
+def _sarvam_chunks(body: dict[str, Any]) -> list[dict[str, Any]]:
+    ts = body.get("timestamps")
+    if not isinstance(ts, dict):
+        return []
+    texts = ts.get("words") or []
+    starts = ts.get("start_time_seconds") or []
+    ends = ts.get("end_time_seconds") or []
+    chunks = []
+    for idx, text in enumerate(texts):
+        if idx >= len(starts) or idx >= len(ends):
+            break
+        try:
+            start, end = float(starts[idx]), float(ends[idx])
+        except (TypeError, ValueError):
+            continue
+        if end > start and str(text).strip():
+            chunks.append({"text": str(text).strip(), "start": start, "end": end, "granularity": "phrase"})
+    return chunks
 
 @app.get("/api/health")
 async def health():
-    return {"ok": True, "service": "gana-caption-studio", "version": "0.1.0"}
+    return {
+        "ok": True,
+        "service": "gana-caption-studio",
+        "version": "0.2.0",
+        "providers": {
+            "gemini_configured": bool(os.getenv("GEMINI_API_KEY")),
+            "sarvam_configured": bool(os.getenv("SARVAM_API_KEY")),
+        },
+    }
 
 @app.post("/api/transcribe")
 async def transcribe(
@@ -35,68 +112,61 @@ async def transcribe(
     if not audio:
         raise HTTPException(400, "The audio file is empty.")
     if len(audio) > MAX_AUDIO_BYTES:
-        raise HTTPException(413, "Audio exceeds the 24 MB first-version limit. Use a shorter clip.")
+        raise HTTPException(413, "Audio exceeds the 24 MB first-version limit.")
     if mode not in {"transcribe", "translit", "translate", "native"}:
         raise HTTPException(400, "Unsupported caption output mode.")
 
-    timeout = httpx.Timeout(120.0, connect=15.0)
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        if provider == "gemini":
-            key = os.getenv("GEMINI_API_KEY")
-            if not key:
-                raise HTTPException(503, "GEMINI_API_KEY is not configured on the server.")
-            prompt = (
-                "Transcribe the supplied speech accurately. Return only the transcript text, "
-                "preserving the spoken language. Do not add commentary. "
-                + ("Use Roman letters to transliterate the same words." if mode == "translit" else "")
-                + ("Translate the spoken meaning into English." if mode == "translate" else "")
-                + ("Use the selected language's native script." if mode == "native" else "")
-                + (f" Speech language hint: {language}." if language != "auto" else "")
+    if provider == "gemini":
+        key = os.getenv("GEMINI_API_KEY")
+        if not key:
+            raise HTTPException(503, "GEMINI_API_KEY is not configured. Add it to the local .env file and restart the backend.")
+        if mode != "transcribe":
+            raise HTTPException(400, "Gemini word-timestamp mode currently supports original transcription only. Use Sarvam for transliteration or translation in this test build.")
+        try:
+            from google import genai
+            from google.genai import types
+            client = genai.Client(api_key=key)
+            config_args: dict[str, Any] = {"word_timestamp": True, "mode": "VERBATIM"}
+            if language != "auto":
+                config_args["language_codes"] = [language]
+            response = await asyncio.to_thread(
+                client.models.generate_content,
+                model=os.getenv("GEMINI_TRANSCRIBE_MODEL", "gemini-3.5-transcribe"),
+                contents=[types.Part.from_bytes(data=audio, mime_type=content_type or "audio/webm")],
+                config=types.GenerateContentConfig(
+                    audio_transcription_config=types.AudioTranscriptionConfig(**config_args)
+                ),
             )
-            import base64
-            payload = {
-                "contents": [{
-                    "parts": [
-                        {"text": prompt},
-                        {"inline_data": {"mime_type": content_type or "audio/webm", "data": base64.b64encode(audio).decode("ascii")}},
-                    ]
-                }]
+            transcript, words = _gemini_words(response)
+            if not transcript:
+                raise ValueError("Gemini returned no transcript text.")
+            return {
+                "text": transcript,
+                "original_text": transcript,
+                "provider": "gemini",
+                "language": language,
+                "timing": "word" if words else "not_returned",
+                "segments": words,
             }
-            model = os.getenv("GEMINI_TRANSCRIBE_MODEL", "gemini-3.5-transcribe")
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-            try:
-                response = await client.post(url, params={"key": key}, json=payload)
-                response.raise_for_status()
-                body = response.json()
-                text = "".join(p.get("text", "") for p in body.get("candidates", [{}])[0].get("content", {}).get("parts", []))
-                if not text.strip():
-                    raise ValueError("Gemini returned no transcript text.")
-                return {"text": text.strip(), "provider": "gemini", "timing": "not_returned"}
-            except httpx.HTTPStatusError as exc:
-                detail = exc.response.text[:600]
-                raise HTTPException(exc.response.status_code, f"Gemini request failed: {detail}") from exc
-            except (httpx.HTTPError, ValueError, KeyError, IndexError) as exc:
-                raise HTTPException(502, f"Gemini transcription failed: {exc}") from exc
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(502, f"Gemini transcription failed: {str(exc)[:500]}") from exc
 
-        if provider == "sarvam":
-            key = os.getenv("SARVAM_API_KEY")
-            if not key:
-                raise HTTPException(503, "SARVAM_API_KEY is not configured on the server.")
-            if mode == "translit":
-                sarvam_mode = "translit"
-            elif mode == "translate":
-                sarvam_mode = "translate"
-            elif mode == "native":
-                sarvam_mode = "transcribe"
-            else:
-                sarvam_mode = "transcribe"
-            data = {
-                "model": os.getenv("SARVAM_STT_MODEL", "saaras:v4"),
-                "mode": sarvam_mode,
-                "with_timestamps": "false",
-            }
-            data["language_code"] = language if language != "auto" else "unknown"
-            try:
+    if provider == "sarvam":
+        key = os.getenv("SARVAM_API_KEY")
+        if not key:
+            raise HTTPException(503, "SARVAM_API_KEY is not configured. Add it to the local .env file and restart the backend.")
+        sarvam_mode = {"transcribe": "transcribe", "translit": "translit", "translate": "translate", "native": "transcribe"}[mode]
+        data = {
+            "model": os.getenv("SARVAM_STT_MODEL", "saaras:v4"),
+            "mode": sarvam_mode,
+            "with_timestamps": "true",
+            "language_code": language if language != "auto" else "unknown",
+        }
+        timeout = httpx.Timeout(120.0, connect=15.0)
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
                 response = await client.post(
                     "https://api.sarvam.ai/speech-to-text",
                     headers={"api-subscription-key": key},
@@ -105,21 +175,26 @@ async def transcribe(
                 )
                 response.raise_for_status()
                 body = response.json()
-                text = body.get("transcript") or body.get("text") or ""
-                if not text.strip():
-                    raise ValueError("Sarvam returned no transcript text.")
-                return {"text": text.strip(), "provider": "sarvam", "timing": "phrase_or_provider_response"}
-            except httpx.HTTPStatusError as exc:
-                detail = exc.response.text[:600]
-                raise HTTPException(exc.response.status_code, f"Sarvam request failed: {detail}") from exc
-            except (httpx.HTTPError, ValueError) as exc:
-                raise HTTPException(502, f"Sarvam transcription failed: {exc}") from exc
+            transcript = str(body.get("transcript") or body.get("text") or "").strip()
+            if not transcript:
+                raise ValueError("Sarvam returned no transcript text.")
+            segments = _sarvam_chunks(body)
+            return {
+                "text": transcript,
+                "original_text": transcript if mode == "transcribe" else None,
+                "provider": "sarvam",
+                "language": body.get("language_code") or language,
+                "language_probability": body.get("language_probability"),
+                "timing": "phrase" if segments else "not_returned",
+                "segments": segments,
+                "request_id": body.get("request_id"),
+            }
+        except httpx.HTTPStatusError as exc:
+            detail = exc.response.text[:500]
+            raise HTTPException(exc.response.status_code, f"Sarvam request failed: {detail}") from exc
+        except (httpx.HTTPError, ValueError) as exc:
+            raise HTTPException(502, f"Sarvam transcription failed: {exc}") from exc
 
     raise HTTPException(400, "Provider must be gemini or sarvam.")
 
-
-# Serve the editor from the same origin so /api/transcribe works without CORS setup.
-from fastapi.staticfiles import StaticFiles
-from pathlib import Path
-REPO_ROOT = Path(__file__).resolve().parent.parent
 app.mount("/", StaticFiles(directory=str(REPO_ROOT), html=True), name="editor")
