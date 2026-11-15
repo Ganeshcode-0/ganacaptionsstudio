@@ -1,48 +1,44 @@
 # Gana Caption Studio
 
-A professional caption-production studio for video creators, editors, agencies and social-media teams.
+A caption-focused video editing workspace. The first implementation milestone delivers a real local video preview, live caption styling, selectable templates, canvas positioning, a single caption clip timeline, subtitle export and a server-side transcription adapter.
 
-## Product direction
+## Run locally
 
-Gana is focused on making the complete caption workflow fast, accurate and intuitive:
+Requires Python 3.10+.
 
-1. Upload a video and process its audio.
-2. Generate and correct a real transcript.
-3. Create accurately timed captions.
-4. Style words, phrases and caption layers.
-5. Animate captions and adjust them on a responsive timeline.
-6. Preview and export the finished video or subtitle files.
-7. Save projects and return to editing later.
+```powershell
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+Copy-Item .env.example .env
+# Add your API keys to .env on your own machine.
+uvicorn backend.main:app --reload
+```
 
-The product should make caption-related work comprehensive without making the editor feel heavy.
+Open http://localhost:8000. FastAPI serves both the editor and API from the same origin.
 
-## Product principles
+## First milestone capabilities
 
-- **Accuracy before decoration:** transcription and timing must be real and editable.
-- **Direct manipulation:** users can select, drag, resize and position captions in the preview.
-- **Responsive by design:** pointer movement, preview playback and timeline editing must remain smooth.
-- **Preview/export consistency:** effects shown in the editor must render correctly in the final output.
-- **Creator productivity:** bulk editing, reusable styles, keyboard shortcuts and smart caption formatting should save time.
-- **Trust:** private media, secure project access, clear data retention and no hidden paid services.
+- Upload and preview a local video without uploading it to a server.
+- Change 16:9, 9:16 and 1:1 preview canvas ratios.
+- Apply five distinct caption design families without changing caption text.
+- Edit text and typography, change colour and position, and drag the caption over the preview.
+- Set a single caption layer's start/end time and scrub the video from the timeline.
+- Export the current caption as an SRT subtitle file.
+- Request speech transcription through the backend using Gemini or Sarvam.
 
-## Documentation
+## Important current limitations
 
-- [Product vision and feature catalogue](docs/PRODUCT_VISION.md)
-- [Development roadmap](docs/ROADMAP.md)
-- [Architecture](docs/ARCHITECTURE.md)
-- [Performance strategy](docs/PERFORMANCE.md)
-- [Security plan](docs/SECURITY.md)
-- [Testing strategy](docs/TESTING.md)
-- [Decision log](docs/DECISIONS.md)
+- This is a **first vertical slice**, not the complete professional editor.
+- The initial timeline has one video, audio and caption lane; it is not yet a multitrack editor.
+- The current SRT export writes one caption block using the manually selected start/end times. It is not a word-aligned subtitle export.
+- The current transcription endpoint returns transcript text only. It does not claim word-level timestamps. Caption timing must be reviewed/entered; do not treat estimated times as provider timings.
+- Browser audio capture plays the video from the start to capture its audio. Short clips are recommended.
+- Burned-in MP4 rendering, durable project storage, authentication, background jobs and cloud media storage are not implemented yet.
+- Provider model IDs and API response shapes can change. Verify against the current provider account/docs before production use.
 
-## Project status
+## Security
 
-The repository is being established. Implementation choices must be based on an audit of the actual existing application and its dependencies. Do not assume a framework, transcription provider, database schema or renderer before inspection.
-
-## Non-goals
-
-Gana is not initially intended to replace full video editors such as Premiere Pro or After Effects. Its primary focus is the caption-production workflow.
-
-## Safety and cost
-
-Never commit API keys, credentials, customer media or private exports. Do not enable paid infrastructure or metered APIs without explicit approval.
+- Keep API keys in local `.env` or deployment environment variables.
+- Never place API keys in frontend JavaScript, HTML, GitHub commits or browser storage.
+- The sample API is not production-hardened: add authentication, rate limits, upload quotas, private media handling and strict CORS before public deployment.
