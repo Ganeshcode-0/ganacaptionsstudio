@@ -20,18 +20,21 @@ Open http://localhost:8000. FastAPI serves both the editor and API from the same
 ## First milestone capabilities
 
 - Upload and preview a local video without uploading it to a server.
-- Change 16:9, 9:16 and 1:1 preview canvas ratios.
+- Preview the source video's original aspect ratio, switch to 16:9, 9:16 or 1:1, or enter a custom canvas size.
 - Apply five distinct caption design families without changing caption text.
 - Edit text and typography, change colour and position, and drag the caption over the preview.
-- Set a single caption layer's start/end time and scrub the video from the timeline.
+- Create multiple caption blocks, select/edit each block, split text, merge with the next block, delete blocks and adjust each block's start/end time.
+- Drag captions horizontally/vertically on the preview and resize using the on-canvas handle or zoom controls.
+- Adjust stroke, shadow and glow independently.
+- Export every caption block to SRT.
 - Export the current caption as an SRT subtitle file.
 - Request speech transcription through the backend using Gemini or Sarvam.
 
 ## Important current limitations
 
 - This is a **first vertical slice**, not the complete professional editor.
-- The initial timeline has one video, audio and caption lane; it is not yet a multitrack editor.
-- The current SRT export writes one caption block using the manually selected start/end times. It is not a word-aligned subtitle export.
+- The initial timeline has one video, audio and caption lane with multiple caption blocks; it is not yet a multitrack editor.
+- Caption blocks have editable manual timing. Splitting a block proposes a midpoint split for convenience; it is not speech-aligned timing. Provider word-level timestamps are not yet wired into the editor.
 - The current transcription endpoint returns transcript text only. It does not claim word-level timestamps. Caption timing must be reviewed/entered; do not treat estimated times as provider timings.
 - Browser audio capture plays the video from the start to capture its audio. Short clips are recommended.
 - Burned-in MP4 rendering, durable project storage, authentication, background jobs and cloud media storage are not implemented yet.
