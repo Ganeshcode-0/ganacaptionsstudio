@@ -95,8 +95,7 @@ async def transcribe(
                 "mode": sarvam_mode,
                 "with_timestamps": "false",
             }
-            if language != "auto":
-                data["language_code"] = language
+            data["language_code"] = language if language != "auto" else "unknown"
             try:
                 response = await client.post(
                     "https://api.sarvam.ai/speech-to-text",
