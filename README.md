@@ -52,3 +52,10 @@ Open http://localhost:8000. FastAPI serves both the editor and API from the same
 See [docs/TESTING_CHECKLIST.md](docs/TESTING_CHECKLIST.md) for safe API-key setup and a step-by-step Gemini/Sarvam test plan. The backend health endpoint reports whether each key is configured without exposing the key.
 
 The JSON in `templates/premium-caption-templates.v1.json` is a future template schema preview only. It is not a separate live template library and its animations are not yet guaranteed in MP4 export.
+
+
+## Mobile-first interface refresh
+
+The home screen now opens to a prominent **New editing** action and a Local Drafts grid. Projects (including their source video and caption edit state) are stored in the browser's IndexedDB on the same device/browser. Opening a draft restores its video and caption blocks. The editor uses a fixed preview stage: the canvas ratio changes inside that reserved area while the source video is displayed with `object-fit: contain` so it is not stretched or cropped. The timeline provides caption clips with drag-to-move and edge trimming, plus Add Text, Auto Captions, Split and Delete actions. The editor is responsive and uses a stacked mobile layout.
+
+This UI refresh does not claim MP4 rendering or cloud-synced projects. SRT export is available; burned-in video export, cross-device project sync, thumbnail generation and full multi-track editing remain future work. The Auto Captions action still depends on valid server-side Gemini/Sarvam configuration and provider API support. Test on a real browser/device before production use.
