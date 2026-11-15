@@ -21,21 +21,21 @@ Open http://localhost:8000. FastAPI serves both the editor and API from the same
 
 - Upload and preview a local video without uploading it to a server.
 - Preview the source video's original aspect ratio, switch to 16:9, 9:16 or 1:1, or enter a custom canvas size.
-- Apply five distinct caption design families without changing caption text.
+- Use the current five simple preview styles; the JSON in `templates/` is a future-facing schema preview, not a full template library.
 - Edit text and typography, change colour and position, and drag the caption over the preview.
 - Create multiple caption blocks, select/edit each block, split text, merge with the next block, delete blocks and adjust each block's start/end time.
 - Drag captions horizontally/vertically on the preview and resize using the on-canvas handle or zoom controls.
 - Adjust stroke, shadow and glow independently.
-- Export every caption block to SRT.
-- Export the current caption as an SRT subtitle file.
-- Request speech transcription through the backend using Gemini or Sarvam.
+- Export timed caption blocks to SRT.
+- Request speech transcription through the backend using Gemini or Sarvam, with provider timing granularity returned to the editor.
 
 ## Important current limitations
 
 - This is a **first vertical slice**, not the complete professional editor.
 - The initial timeline has one video, audio and caption lane with multiple caption blocks; it is not yet a multitrack editor.
-- Caption blocks have editable manual timing. Splitting a block proposes a midpoint split for convenience; it is not speech-aligned timing. Provider word-level timestamps are not yet wired into the editor.
-- The current transcription endpoint returns transcript text only. It does not claim word-level timestamps. Caption timing must be reviewed/entered; do not treat estimated times as provider timings.
+- Gemini transcription is configured to request word-level timestamps in VERBATIM mode. The provider feature is experimental and must be verified with a real API-key test clip.
+- Sarvam REST returns phrase/chunk-level timestamps, not word-level timestamps. The current UI creates timed blocks from the timestamps returned by the selected provider.
+- If a provider returns no timestamps, the UI creates a manual full-clip caption block and explicitly marks timing as requiring review; it does not label that timing as AI-generated.
 - Browser audio capture plays the video from the start to capture its audio. Short clips are recommended.
 - Burned-in MP4 rendering, durable project storage, authentication, background jobs and cloud media storage are not implemented yet.
 - Provider model IDs and API response shapes can change. Verify against the current provider account/docs before production use.
