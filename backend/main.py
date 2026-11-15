@@ -117,3 +117,10 @@ async def transcribe(
                 raise HTTPException(502, f"Sarvam transcription failed: {exc}") from exc
 
     raise HTTPException(400, "Provider must be gemini or sarvam.")
+
+
+# Serve the editor from the same origin so /api/transcribe works without CORS setup.
+from fastapi.staticfiles import StaticFiles
+from pathlib import Path
+REPO_ROOT = Path(__file__).resolve().parent.parent
+app.mount("/", StaticFiles(directory=str(REPO_ROOT), html=True), name="editor")
