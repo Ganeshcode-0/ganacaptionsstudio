@@ -1,6 +1,5 @@
 import asyncio
 import os
-import re
 from pathlib import Path
 from typing import Any
 
@@ -36,9 +35,8 @@ def _seconds(value: Any) -> float | None:
     if isinstance(value, (int, float)):
         return float(value)
     raw = str(value).strip()
-    match = re.fullmatch(r"([0-9]+(?:\\.[0-9]+)?)s", raw)
-    if match:
-        return float(match.group(1))
+    if raw.endswith("s"):
+        raw = raw[:-1]
     try:
         return float(raw)
     except ValueError:
