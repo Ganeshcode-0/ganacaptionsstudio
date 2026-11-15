@@ -157,15 +157,17 @@ async def transcribe(
         key = os.getenv("SARVAM_API_KEY")
         if not key:
             raise HTTPException(503, "SARVAM_API_KEY is not configured. Add it to the local .env file and restart the backend.")
-        sarvam_mode = {"transcribe": "transcribe", "translit": "translit", "translate": "translate", "native": "transcribe"}[mode]
-        data = {
-            "model": os.getenv("SARVAM_STT_MODEL", "saaras:v4"),
-            "mode": sarvam_mode,
-            "with_timestamps": "true",
-            "language_code": language if language != "auto" else "unknown",
-        }
+
+        requested_mode = {"transcribe": "transcribe", "translit": "translit", "translate": "translate", "native": "transcribe"}[mode]
         timeout = httpx.Timeout(120.0, connect=15.0)
-        try:
+
+        async def sarvam_request(output_mode: str, with_timestamps: bool, language_code: str):
+            data = {
+                "model": os.getenv("SARVAM_STT_MODEL", "saaras:v4"),
+                "mode": output_mode,
+                "with_timestamps": "true" if with_timestamps else "false",
+                "language_code": language_code,
+            }
             async with httpx.AsyncClient(timeout=timeout) as client:
                 response = await client.post(
                     "https://api.sarvam.ai/speech-to-text",
@@ -174,20 +176,32 @@ async def transcribe(
                     files={"file": (file.filename or "audio.webm", audio, content_type or "audio/webm")},
                 )
                 response.raise_for_status()
-                body = response.json()
-            transcript = str(body.get("transcript") or body.get("text") or "").strip()
+                return response.json()
+
+        try:
+            # Preserve source-language text before any script conversion or translation.
+            source_body = await sarvam_request("transcribe", False, language if language != "auto" else "unknown")
+            original_text = str(source_body.get("transcript") or source_body.get("text") or "").strip()
+            detected_language = source_body.get("language_code") or (language if language != "auto" else "unknown")
+            if not original_text:
+                raise ValueError("Sarvam returned no source transcript text.")
+
+            output_body = await sarvam_request(requested_mode, True, detected_language)
+            transcript = str(output_body.get("transcript") or output_body.get("text") or "").strip()
             if not transcript:
-                raise ValueError("Sarvam returned no transcript text.")
-            segments = _sarvam_chunks(body)
+                raise ValueError("Sarvam returned no output transcript text.")
+            segments = _sarvam_chunks(output_body)
             return {
                 "text": transcript,
-                "original_text": transcript if mode == "transcribe" else None,
+                "original_text": original_text,
                 "provider": "sarvam",
-                "language": body.get("language_code") or language,
-                "language_probability": body.get("language_probability"),
+                "language": output_body.get("language_code") or detected_language,
+                "language_probability": output_body.get("language_probability"),
                 "timing": "phrase" if segments else "not_returned",
                 "segments": segments,
-                "request_id": body.get("request_id"),
+                "request_id": output_body.get("request_id"),
+                "source_request_id": source_body.get("request_id"),
+                "note": "Sarvam REST timestamps are phrase/chunk-level, not individual word-level.",
             }
         except httpx.HTTPStatusError as exc:
             detail = exc.response.text[:500]
